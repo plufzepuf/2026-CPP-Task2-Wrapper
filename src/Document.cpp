@@ -5,26 +5,48 @@
 #include <vector>
 
 namespace {
+// Маски UTF-8 и диапазоны допустимых кодовых точек Unicode.
+constexpr unsigned char kAsciiLimit = 0x80U;
+constexpr unsigned char kTwoByteMask = 0xE0U;
+constexpr unsigned char kTwoBytePrefix = 0xC0U;
+constexpr unsigned char kThreeByteMask = 0xF0U;
+constexpr unsigned char kThreeBytePrefix = 0xE0U;
+constexpr unsigned char kFourByteMask = 0xF8U;
+constexpr unsigned char kFourBytePrefix = 0xF0U;
+constexpr unsigned char kLeadingByteMask = 0x7FU;
+constexpr unsigned char kContinuationMask = 0xC0U;
+constexpr unsigned char kContinuationPrefix = 0x80U;
+constexpr unsigned char kDataMask = 0x3FU;
+constexpr unsigned int kDataShift = 6U;
+constexpr unsigned int kMiddleShift = 12U;
+constexpr unsigned int kHighShift = 18U;
+constexpr char32_t kTwoByteMinimum = 0x80U;
+constexpr char32_t kThreeByteMinimum = 0x800U;
+constexpr char32_t kFourByteMinimum = 0x10000U;
+constexpr char32_t kMaxCodepoint = 0x10FFFFU;
+constexpr char32_t kSurrogateStart = 0xD800U;
+constexpr char32_t kSurrogateEnd = 0xDFFFU;
+
 // Преобразование UTF-8 в Unicode без устаревшего std::wstring_convert.
 std::size_t continuation_count(unsigned char first) {
-    if (first < 0x80U) {
+    if (first < kAsciiLimit) {
         return 0;
     }
-    if ((first & 0xE0U) == 0xC0U) {
+    if ((first & kTwoByteMask) == kTwoBytePrefix) {
         return 1;
     }
-    if ((first & 0xF0U) == 0xE0U) {
+    if ((first & kThreeByteMask) == kThreeBytePrefix) {
         return 2;
     }
-    if ((first & 0xF8U) == 0xF0U) {
+    if ((first & kFourByteMask) == kFourBytePrefix) {
         return 3;
     }
     throw std::invalid_argument("Invalid UTF-8 sequence");
 }
 
 bool valid_codepoint(char32_t symbol) {
-    return symbol <= 0x10FFFFU &&
-           !(symbol >= 0xD800U && symbol <= 0xDFFFU);
+    return symbol <= kMaxCodepoint &&
+           (symbol < kSurrogateStart || symbol > kSurrogateEnd);
 }
 
 char32_t decode_character(const std::string& text, std::size_t& pos) {
@@ -37,18 +59,22 @@ char32_t decode_character(const std::string& text, std::size_t& pos) {
         throw std::invalid_argument("Incomplete UTF-8 sequence");
     }
 
-    char32_t symbol = first & (0x7FU >> (remaining + 1U));
+    char32_t symbol = first & (kLeadingByteMask >> (remaining + 1U));
     for (std::size_t count = 0; count < remaining; ++count) {
         const auto next = static_cast<unsigned char>(text[pos++]);
-        if ((next & 0xC0U) != 0x80U) {
+        if ((next & kContinuationMask) != kContinuationPrefix) {
             throw std::invalid_argument("Invalid UTF-8 continuation byte");
         }
-        symbol = (symbol << 6U) | (next & 0x3FU);
+        symbol = (symbol << kDataShift) | (next & kDataMask);
     }
 
     // Не допускаем сокращённых записей и некорректных значений Unicode.
-    const char32_t minimum = remaining == 1 ? 0x80U :
-                             remaining == 2 ? 0x800U : 0x10000U;
+    char32_t minimum = kTwoByteMinimum;
+    if (remaining == 2) {
+        minimum = kThreeByteMinimum;
+    } else if (remaining == 3) {
+        minimum = kFourByteMinimum;
+    }
     if (symbol < minimum || !valid_codepoint(symbol)) {
         throw std::invalid_argument("Invalid UTF-8 codepoint");
     }
@@ -67,20 +93,20 @@ void append_utf8(std::string& result, char32_t symbol) {
     if (!valid_codepoint(symbol)) {
         throw std::invalid_argument("Invalid Unicode codepoint");
     }
-    if (symbol < 0x80U) {
+    if (symbol < kAsciiLimit) {
         result += static_cast<char>(symbol);
-    } else if (symbol < 0x800U) {
-        result += static_cast<char>(0xC0U | (symbol >> 6U));
-        result += static_cast<char>(0x80U | (symbol & 0x3FU));
-    } else if (symbol < 0x10000U) {
-        result += static_cast<char>(0xE0U | (symbol >> 12U));
-        result += static_cast<char>(0x80U | ((symbol >> 6U) & 0x3FU));
-        result += static_cast<char>(0x80U | (symbol & 0x3FU));
+    } else if (symbol < kThreeByteMinimum) {
+        result += static_cast<char>(kTwoBytePrefix | (symbol >> kDataShift));
+        result += static_cast<char>(kContinuationPrefix | (symbol & kDataMask));
+    } else if (symbol < kFourByteMinimum) {
+        result += static_cast<char>(kThreeBytePrefix | (symbol >> kMiddleShift));
+        result += static_cast<char>(kContinuationPrefix | ((symbol >> kDataShift) & kDataMask));
+        result += static_cast<char>(kContinuationPrefix | (symbol & kDataMask));
     } else {
-        result += static_cast<char>(0xF0U | (symbol >> 18U));
-        result += static_cast<char>(0x80U | ((symbol >> 12U) & 0x3FU));
-        result += static_cast<char>(0x80U | ((symbol >> 6U) & 0x3FU));
-        result += static_cast<char>(0x80U | (symbol & 0x3FU));
+        result += static_cast<char>(kFourBytePrefix | (symbol >> kHighShift));
+        result += static_cast<char>(kContinuationPrefix | ((symbol >> kMiddleShift) & kDataMask));
+        result += static_cast<char>(kContinuationPrefix | ((symbol >> kDataShift) & kDataMask));
+        result += static_cast<char>(kContinuationPrefix | (symbol & kDataMask));
     }
 }
 
@@ -181,7 +207,7 @@ const std::string& Document::text() const {
 
 std::string Document::replace_words(const Arguments& args) {
     const std::u32string from = decode(required(args, "from"));
-    const std::u32string to = decode(required(args, "to"));
+    const std::u32string replacement = decode(required(args, "to"));
     if (from.empty()) {
         throw std::invalid_argument("Replacement word must not be empty");
     }
@@ -196,7 +222,7 @@ std::string Document::replace_words(const Arguments& args) {
         const bool right_ok = match && (pos + from.size() == source.size() ||
                              !is_word_char(source[pos + from.size()]));
         if (match && left_ok && right_ok) {
-            result += to;
+            result += replacement;
             pos += from.size();
         } else {
             result += source[pos];
@@ -216,7 +242,7 @@ std::string Document::find_phrase(const Arguments& args) const {
                "Не найдено" : "Найдено";
 }
 
-std::string Document::capitalize_words(const Arguments&) {
+std::string Document::capitalize_words(const Arguments& /*unused*/) {
     std::u32string result = decode(text_);
     bool first_letter = true;
     for (char32_t& symbol : result) {
@@ -233,7 +259,7 @@ std::string Document::capitalize_words(const Arguments&) {
     return text_;
 }
 
-std::string Document::capitalize_sentences(const Arguments&) {
+std::string Document::capitalize_sentences(const Arguments& /*unused*/) {
     std::u32string result = decode(text_);
     bool first_letter = true;
     for (char32_t& symbol : result) {
@@ -251,7 +277,7 @@ std::string Document::capitalize_sentences(const Arguments&) {
     return text_;
 }
 
-std::string Document::number_sentences(const Arguments&) {
+std::string Document::number_sentences(const Arguments& /*unused*/) {
     const std::u32string source = decode(text_);
     std::vector<std::u32string> sentences;
     std::u32string current;

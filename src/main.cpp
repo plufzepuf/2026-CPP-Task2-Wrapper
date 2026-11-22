@@ -6,12 +6,18 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
 namespace {
+struct EditorPaths {
+    std::string input;
+    std::string output;
+};
+
 std::string read_file(const std::string& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -20,12 +26,12 @@ std::string read_file(const std::string& path) {
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
-void write_file(const std::string& path, const std::string& text) {
+void write_file(const std::string& path, std::string_view content) {
     std::ofstream output(path, std::ios::binary);
     if (!output) {
         throw std::runtime_error("Cannot open output file: " + path);
     }
-    output << text;
+    output << content;
     if (!output) {
         throw std::runtime_error("Cannot write output file: " + path);
     }
@@ -52,12 +58,12 @@ void show_menu() {
 void replace_words(Engine& engine) {
     Arguments overrides;
     const std::string from = ask("Какое слово заменить (Enter = кот): ");
-    const std::string to = ask("На что заменить (Enter = пёс): ");
+    const std::string replacement = ask("На что заменить (Enter = пёс): ");
     if (!from.empty()) {
         overrides["from"] = from;
     }
-    if (!to.empty()) {
-        overrides["to"] = to;
+    if (!replacement.empty()) {
+        overrides["to"] = replacement;
     }
     if (std::cin) {
         std::cout << engine.execute("replace", overrides) << '\n';
@@ -101,8 +107,8 @@ bool run_command(const std::string& choice, Engine& engine, Document& doc,
     return true;
 }
 
-void run_editor(const std::string& input_path, const std::string& output_path) {
-    Document doc(read_file(input_path));
+void run_editor(const EditorPaths& paths) {
+    Document doc(read_file(paths.input));
 
     Wrapper replacement(&doc, &Document::replace_words,
                         {{"from", "кот"}, {"to", "пёс"}});
@@ -126,7 +132,7 @@ void run_editor(const std::string& input_path, const std::string& output_path) {
             break;
         }
         try {
-            if (!run_command(choice, engine, doc, output_path)) {
+            if (!run_command(choice, engine, doc, paths.output)) {
                 break;
             }
         } catch (const std::exception& error) {
@@ -151,7 +157,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     try {
-        run_editor(argv[1], argv[2]);
+        run_editor({argv[1], argv[2]});
     } catch (const std::exception& error) {
         std::cerr << "Ошибка: " << error.what() << '\n';
         return 1;

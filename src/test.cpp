@@ -14,14 +14,16 @@
 
 namespace {
 struct Subject {
-    std::string func(const Arguments& args) {
-        return args.at("arg1") + " " + args.at("arg2");
+    std::string separator = " ";
+    [[nodiscard]] std::string func(const Arguments& args) {
+        return args.at("arg1") + separator + args.at("arg2");
     }
 };
 
 struct ConstSubject {
-    std::string func(const Arguments& args) const {
-        return args.at("x");
+    std::string prefix;
+    [[nodiscard]] std::string func(const Arguments& args) const {
+        return prefix + args.at("x");
     }
 };
 
@@ -57,14 +59,7 @@ bool test_wrapper_and_engine() {
     return true;
 }
 
-bool test_replacement() {
-    Document document("кот котик кот. Кот и кот!");
-    Wrapper wrapper(&document, &Document::replace_words,
-                    {{"from", "кот"}, {"to", "пёс"}});
-    CHECK(wrapper.invoke() == "пёс котик пёс. Кот и пёс!");
-    CHECK(wrapper.invoke({{"from", "пёс"}, {"to", "ёж"}}) ==
-          "ёж котик ёж. Кот и ёж!");
-
+bool test_replacement_boundaries() {
     Document small("а");
     CHECK(small.replace_words({{"from", "кот"}, {"to", "пёс"}}) == "а");
     Document two_letters("аб");
@@ -78,6 +73,17 @@ bool test_replacement() {
     Document long_word("а");
     CHECK(long_word.replace_words({{"from", "оченьдлинноеслово"},
                                    {"to", "x"}}) == "а");
+
+    return true;
+}
+
+bool test_replacement() {
+    Document document("кот котик кот. Кот и кот!");
+    Wrapper wrapper(&document, &Document::replace_words,
+                    {{"from", "кот"}, {"to", "пёс"}});
+    CHECK(wrapper.invoke() == "пёс котик пёс. Кот и пёс!");
+    CHECK(wrapper.invoke({{"from", "пёс"}, {"to", "ёж"}}) ==
+          "ёж котик ёж. Кот и ёж!");
 
     // Два Enter в меню означают использование обоих аргументов по умолчанию.
     Document unchanged("добрый день!");
@@ -113,6 +119,11 @@ bool test_numbering() {
     CHECK(empty.number_sentences({}).empty());
     Document one("без точки");
     CHECK(one.number_sentences({}) == "1. без точки");
+    Document emoji("привет 🌍! ёж 🐱.");
+    CHECK(emoji.capitalize_sentences({}) == "Привет 🌍! Ёж 🐱.");
+    Document unicode("ёжик 🌍 🐱");
+    CHECK(unicode.replace_words({{"from", "ёжик"}, {"to", "ёж"}}) ==
+          "ёж 🌍 🐱");
     return true;
 }
 
@@ -137,10 +148,16 @@ bool test_invalid_arguments() {
 }  // namespace
 
 int main() {
-    if (!test_wrapper_and_engine() || !test_replacement() || !test_search() ||
-        !test_capitalization() || !test_numbering() || !test_invalid_arguments()) {
+    try {
+        if (!test_wrapper_and_engine() || !test_replacement() ||
+            !test_replacement_boundaries() || !test_search() ||
+            !test_capitalization() || !test_numbering() || !test_invalid_arguments()) {
+            return 1;
+        }
+        std::cout << "All tests passed\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "Unexpected exception: " << error.what() << '\n';
         return 1;
     }
-    std::cout << "All tests passed\n";
-    return 0;
 }
