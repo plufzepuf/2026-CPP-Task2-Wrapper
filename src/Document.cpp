@@ -1,23 +1,95 @@
-// std::codecvt работает в C++17. Эта строка убирает предупреждение MSVC C4996.
-#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
-
 #include "Document.h"
 
-#include <codecvt>
-#include <locale>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
 namespace {
+// Преобразование UTF-8 в Unicode без устаревшего std::wstring_convert.
+std::size_t continuation_count(unsigned char first) {
+    if (first < 0x80U) {
+        return 0;
+    }
+    if ((first & 0xE0U) == 0xC0U) {
+        return 1;
+    }
+    if ((first & 0xF0U) == 0xE0U) {
+        return 2;
+    }
+    if ((first & 0xF8U) == 0xF0U) {
+        return 3;
+    }
+    throw std::invalid_argument("Invalid UTF-8 sequence");
+}
+
+bool valid_codepoint(char32_t symbol) {
+    return symbol <= 0x10FFFFU &&
+           !(symbol >= 0xD800U && symbol <= 0xDFFFU);
+}
+
+char32_t decode_character(const std::string& text, std::size_t& pos) {
+    const auto first = static_cast<unsigned char>(text[pos++]);
+    const std::size_t remaining = continuation_count(first);
+    if (remaining == 0) {
+        return first;
+    }
+    if (remaining > text.size() - pos) {
+        throw std::invalid_argument("Incomplete UTF-8 sequence");
+    }
+
+    char32_t symbol = first & (0x7FU >> (remaining + 1U));
+    for (std::size_t count = 0; count < remaining; ++count) {
+        const auto next = static_cast<unsigned char>(text[pos++]);
+        if ((next & 0xC0U) != 0x80U) {
+            throw std::invalid_argument("Invalid UTF-8 continuation byte");
+        }
+        symbol = (symbol << 6U) | (next & 0x3FU);
+    }
+
+    // Не допускаем сокращённых записей и некорректных значений Unicode.
+    const char32_t minimum = remaining == 1 ? 0x80U :
+                             remaining == 2 ? 0x800U : 0x10000U;
+    if (symbol < minimum || !valid_codepoint(symbol)) {
+        throw std::invalid_argument("Invalid UTF-8 codepoint");
+    }
+    return symbol;
+}
+
 std::u32string decode(const std::string& text) {
-    std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> converter;
-    return converter.from_bytes(text);
+    std::u32string result;
+    for (std::size_t pos = 0; pos < text.size();) {
+        result += decode_character(text, pos);
+    }
+    return result;
+}
+
+void append_utf8(std::string& result, char32_t symbol) {
+    if (!valid_codepoint(symbol)) {
+        throw std::invalid_argument("Invalid Unicode codepoint");
+    }
+    if (symbol < 0x80U) {
+        result += static_cast<char>(symbol);
+    } else if (symbol < 0x800U) {
+        result += static_cast<char>(0xC0U | (symbol >> 6U));
+        result += static_cast<char>(0x80U | (symbol & 0x3FU));
+    } else if (symbol < 0x10000U) {
+        result += static_cast<char>(0xE0U | (symbol >> 12U));
+        result += static_cast<char>(0x80U | ((symbol >> 6U) & 0x3FU));
+        result += static_cast<char>(0x80U | (symbol & 0x3FU));
+    } else {
+        result += static_cast<char>(0xF0U | (symbol >> 18U));
+        result += static_cast<char>(0x80U | ((symbol >> 12U) & 0x3FU));
+        result += static_cast<char>(0x80U | ((symbol >> 6U) & 0x3FU));
+        result += static_cast<char>(0x80U | (symbol & 0x3FU));
+    }
 }
 
 std::string encode(const std::u32string& text) {
-    std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> converter;
-    return converter.to_bytes(text);
+    std::string result;
+    for (char32_t symbol : text) {
+        append_utf8(result, symbol);
+    }
+    return result;
 }
 
 bool is_letter(char32_t symbol) {
