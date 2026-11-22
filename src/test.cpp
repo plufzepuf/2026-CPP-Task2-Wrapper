@@ -15,7 +15,7 @@
 namespace {
 struct Subject {
     std::string separator = " ";
-    [[nodiscard]] std::string func(const Arguments& args) {
+    [[nodiscard]] std::string func(const Arguments& args) const {
         return args.at("arg1") + separator + args.at("arg2");
     }
 };
