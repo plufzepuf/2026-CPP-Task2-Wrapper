@@ -119,7 +119,7 @@ void run_editor(const std::string& input_path, const std::string& output_path) {
     engine.register_command(&sentences, "sentences");
     engine.register_command(&numbering, "number");
 
-    while (std::cin) {
+    while (true) {
         show_menu();
         const std::string choice = ask("Ваш выбор: ");
         if (!std::cin) {
